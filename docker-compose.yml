@@ -1,0 +1,11 @@
+services:
+  php-apache:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: php7.2-apache
+    ports:
+      - "80:80" # Mapea el puerto 80 del contenedor al puerto 8080 del host
+    volumes:
+      - ./:/var/www/html # Sincroniza la carpeta del proyecto en el host con el contenedor
+    restart: always

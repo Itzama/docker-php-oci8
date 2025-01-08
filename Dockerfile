@@ -1,33 +1,61 @@
-FROM php:7.2
+# Usamos la imagen oficial de PHP 7.2 con Apache
+FROM php:7.2-apache
 
-RUN apt-get update && apt-get install -qqy git unzip libfreetype6-dev \
-        libjpeg62-turbo-dev \
-        libpng-dev \
-        libaio1 wget && apt-get clean autoclean && apt-get autoremove --yes &&  rm -rf /var/lib/{apt,dpkg,cache,log}/ 
-#composer
-RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+# Instalamos las dependencias necesarias para OCI8 y PDO_OCI
+RUN apt-get update && apt-get install -y \
+    unzip \
+    libaio1 \
+    libpng-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
+    gcc \
+    make \
+    autoconf \
+    libc-dev \
+    libssl-dev \
+    && docker-php-ext-configure gd --with-freetype-dir=/usr/include/ --with-jpeg-dir=/usr/include/ \
+    && docker-php-ext-install gd \
+    && docker-php-ext-install pdo pdo_mysql \
+    && docker-php-ext-install mysqli \
+    && docker-php-ext-enable mysqli
 
-# ORACLE oci 
-RUN mkdir /opt/oracle \
-    && cd /opt/oracle     
-    
-ADD instantclient-basic-linux.x64-12.1.0.2.0.zip /opt/oracle
-ADD instantclient-sdk-linux.x64-12.1.0.2.0.zip /opt/oracle
+# Copiar la carpeta instantclient_12_1 directamente al contenedor
+COPY ./instantclient_12_1 /opt/oracle/instantclient_12_1
 
-# Install Oracle Instantclient
-RUN  unzip /opt/oracle/instantclient-basic-linux.x64-12.1.0.2.0.zip -d /opt/oracle \
-    && unzip /opt/oracle/instantclient-sdk-linux.x64-12.1.0.2.0.zip -d /opt/oracle \
-    && ln -s /opt/oracle/instantclient_12_1/libclntsh.so.12.1 /opt/oracle/instantclient_12_1/libclntsh.so \
-    && ln -s /opt/oracle/instantclient_12_1/libclntshcore.so.12.1 /opt/oracle/instantclient_12_1/libclntshcore.so \
-    && ln -s /opt/oracle/instantclient_12_1/libocci.so.12.1 /opt/oracle/instantclient_12_1/libocci.so \
-    && rm -rf /opt/oracle/*.zip
-    
-ENV LD_LIBRARY_PATH  /opt/oracle/instantclient_12_1:${LD_LIBRARY_PATH}
-    
-# Install Oracle extensions
-RUN echo 'instantclient,/opt/oracle/instantclient_12_1/' | pecl install oci8 \ 
-      && docker-php-ext-enable \
-               oci8 \ 
-       && docker-php-ext-configure pdo_oci --with-pdo-oci=instantclient,/opt/oracle/instantclient_12_1,12.1 \
-       && docker-php-ext-install \
-               pdo_oci 
+# Crear los enlaces simbólicos requeridos para las librerías de Oracle
+RUN ln -s /opt/oracle/instantclient_12_1/libclntsh.so.12.1 /opt/oracle/instantclient_12_1/libclntsh.so \
+    && ln -s /opt/oracle/instantclient_12_1/libocci.so.12.1 /opt/oracle/instantclient_12_1/libocci.so
+
+# Actualizamos la configuración de las librerías y las cargamos
+RUN sh -c "echo /opt/oracle/instantclient_12_1 > /etc/ld.so.conf.d/oracle-instantclient.conf" \
+    && ldconfig
+
+# Configuramos las variables de entorno para Oracle Instant Client
+ENV LD_LIBRARY_PATH /opt/oracle/instantclient_12_1
+ENV ORACLE_HOME /opt/oracle/instantclient_12_1
+
+# Instalamos las extensiones OCI8 y PDO_OCI utilizando docker-php-ext-install
+RUN docker-php-ext-configure oci8 --with-oci8=instantclient,/opt/oracle/instantclient_12_1 \
+    && docker-php-ext-install -j$(nproc) oci8
+
+RUN docker-php-ext-configure pdo_oci --with-pdo-oci=instantclient,/opt/oracle/instantclient_12_1 \
+    && docker-php-ext-install pdo_oci
+
+# Instalamos otras extensiones útiles
+RUN docker-php-ext-install zip bcmath opcache pcntl \
+    && docker-php-ext-install exif sockets
+
+# Configuramos el directorio de trabajo dentro del contenedor
+WORKDIR /var/www/html
+
+# Copiamos los archivos del proyecto
+COPY ./doix /var/www/html
+
+# Establecemos permisos correctos
+RUN chown -R www-data:www-data /var/www/html && chmod -R 755 /var/www/html
+
+# Exponemos el puerto 80
+EXPOSE 80
+
+# Iniciamos Apache en modo foreground
+CMD ["apache2-foreground"]
